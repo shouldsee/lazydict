@@ -1,7 +1,15 @@
+
 from collections import MutableMapping
 from threading import RLock
 from inspect import getargspec
-from copy import copy
+# from copy import copy
+import copy
+
+import json
+import sys
+import traceback
+def get__callstack(traceback_limit=10):
+    return traceback.extract_tb(  sys.exc_info()[-1], limit=traceback_limit)
 
 def get_version():
     VERSION = (     # SEMANTIC
@@ -19,8 +27,6 @@ def get_version():
         version += "+%s" % VERSION[4]
     return version
 
-CONSTANT = frozenset(['evaluating', 'evaluated', 'error'])
-
 class LazyDictionaryError(Exception):
     pass
 
@@ -31,13 +37,22 @@ class ConstantRedefinitionError(LazyDictionaryError):
     pass
 
 class LazyDictionary(MutableMapping):
-    def __init__(self, values={}):
+    def __init__(self, values={},states={}):
         self.lock = RLock()
-        self.values = copy(values)
-        self.states = {}
+        self.values = copy.copy(values)
+        self.states = copy.copy(states)
         for key in self.values:
-            self.states[key] = 'defined'
-
+            self.states.setdefault(key, "defined")
+#             self.states[key] = 'defined'
+            
+    def __copy__(self):
+        with self.lock:
+            res = LazyDictionary(values=copy.copy(self.values), 
+                                 states = copy.copy(self.states))
+            return res
+    def copy(self):
+        return self.__copy__()
+        
     def __len__(self):
         return len(self.values)
 
@@ -54,23 +69,25 @@ class LazyDictionary(MutableMapping):
                 elif self.states[key] == 'defined':
                     value = self.values[key]
                     if callable(value):
-                        args, _, _, _ = getargspec(value)
+                        (args, varargs, keywords, defaults) = getargspec(value)
                         if len(args) == 0:
-                            self.states[key] = 'evaluating'
-                            try:
-                                self.values[key] = value()
-                            except Exception as ex:
-                                self.values[key] = ex
-                                self.states[key] = 'error'
-                                raise ex
-                        elif len(args) == 1:
-                            self.states[key] = 'evaluating'
-                            try:
-                                self.values[key] = value(self)
-                            except Exception as ex:
-                                self.values[key] = ex
-                                self.states[key] = 'error'
-                                raise ex
+                            _args = []
+                        elif len(args)==1:
+                            _args = [self]
+                        elif len(args)==2:
+                            _args = [self,key]
+                        else:
+                            assert 0,(len(args),)
+                        
+                        self.states[key] = 'evaluating'
+                        try:
+                            self.values[key] = value(*_args)
+                        except Exception as ex:
+                            self.values[key] = ex
+                            self.states[key] = 'error'
+                            print (json.dumps(get__callstack()[::-1],indent=4))
+                            raise ex
+                            
                     self.states[key] = 'evaluated'
             return self.values[key]
 
@@ -79,14 +96,14 @@ class LazyDictionary(MutableMapping):
 
     def __setitem__(self, key, value):
         with self.lock:
-            if self.states.get(key) in CONSTANT:
+            if key in self.states and self.states[key][0:4] == 'eval':
                 raise ConstantRedefinitionError('"%s" is immutable' % key)
             self.values[key] = value
             self.states[key] = 'defined'
 
     def __delitem__(self, key):
         with self.lock:
-            if self.states.get(key) in CONSTANT:
+            if key in self.states and self.states[key][0:4] == 'eval':
                 raise ConstantRedefinitionError('"%s" is immutable' % key)
             del self.values[key]
             del self.states[key]
@@ -96,14 +113,3 @@ class LazyDictionary(MutableMapping):
 
     def __repr__(self):
         return "LazyDictionary({0})".format(repr(self.values))
-
-class MutableLazyDictionary(LazyDictionary):
-    def __setitem__(self, key, value):
-        with self.lock:
-            self.values[key] = value
-            self.states[key] = 'defined'
-
-    def __delitem__(self, key):
-        with self.lock:
-            del self.values[key]
-            del self.states[key]
