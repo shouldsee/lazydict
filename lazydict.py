@@ -36,6 +36,10 @@ class CircularReferenceError(LazyDictionaryError):
 class ConstantRedefinitionError(LazyDictionaryError):
     pass
 
+import re
+def _sanitised(s,):
+    return re.sub("[^a-zA-Z0-9_]",'_',s)
+    
 class LazyDictionary(MutableMapping):
     def __init__(self, values={},states={}):
         self.lock = RLock()
@@ -58,6 +62,17 @@ class LazyDictionary(MutableMapping):
 
     def __iter__(self):
         return iter(self.values)
+    
+    @property
+    def keysFromSanitised(self):
+        res = {}
+        for k in self.values:
+            k_sans = _sanitised(k)
+            assert k_sans not in res, (k, res[k_sans])
+            res[k_sans] = k 
+            
+#         {k:_sanitised(v) for k,v in self.values}
+        return res
 
     def __getitem__(self, key):
         with self.lock:
@@ -76,6 +91,10 @@ class LazyDictionary(MutableMapping):
                             _args = [self]
                         elif len(args)==2:
                             _args = [self,key]
+                        elif len(args) >= 3:
+                            _args = [self,key]
+                            for k in args[2:]:
+                                _args.append( self[ self.keysFromSanitised[k] ] )
                         else:
                             assert 0,(len(args),)
                         
