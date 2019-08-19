@@ -112,6 +112,13 @@ class LazyDictionary(MutableMapping):
                                    if k not in ['lock']})
         return newone        
         
+    def pruneTo(self,keys):
+        for k in self.keys():
+            if k not in keys:
+                del self.values[k]
+                del self.states[k]
+        return self
+    
     def copy(self):
         return self.__copy__()
     
@@ -154,7 +161,7 @@ class LazyDictionary(MutableMapping):
                     raise self.values[key]
                 elif self.states[key] == 'defined':
                     value = self.values[key]
-                    if callable(value) and not is__plainFunction(value):
+                    if callable(value) and not is__plainFunction(value) and not inspect.isclass(value):
                         (args, varargs, keywords, defaults) = getargspec(value)
                         if len(args) == 0:
                             _args = []
@@ -175,7 +182,7 @@ class LazyDictionary(MutableMapping):
                         except Exception as ex:
                             self.values[key] = ex
                             self.states[key] = 'error'
-                            print (json.dumps(get__callstack(self.tb_limit)[::-1],indent=4))
+                            print (json.dumps(get__callstack(self.tb_limit)[::],indent=4))
                             raise ex
                             
                     self.states[key] = 'evaluated'
